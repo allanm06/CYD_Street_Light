@@ -1,5 +1,9 @@
 /*
- * CYD Street Light - tela de busca de redes Wi-Fi.
+ * CYD Street Light - painel de um poste (Smart Street Light).
+ *
+ * Outra ESP32 no poste le os sensores (tensao, corrente, potencia...) e
+ * envia via Wi-Fi/DDS; esta CYD mostra os dados. O icone de Wi-Fi no
+ * cabecalho abre a tela de redes.
  *
  * Placa: ESP32-2432S028 ("Cheap Yellow Display")
  * Display/touch inicializados igual ao projeto CYD_Ecg (TFT_eSPI + XPT2046).
@@ -12,6 +16,13 @@
 #include <XPT2046_Touchscreen.h>
 
 #include "ui/ui_wifi.h"
+#include "ui/ui_pole.h"
+
+#define POLE_NAME "Poste 01"
+
+/* Enquanto o DDS nao esta integrado, gera leituras falsas (1 por segundo)
+ * para visualizar a tela. Coloque 0 para mostrar "Aguardando dados". */
+#define POLE_DEMO_DATA 1
 
 /* ---- Touch (barramento VSPI proprio) ----------------------------------- */
 #define XPT2046_IRQ  36
@@ -207,9 +218,43 @@ static void wifi_poll(void)
     static uint32_t last;
     if (millis() - last > 1000) {
         last = millis();
-        ui_wifi_set_connected(WiFi.isConnected() ? WiFi.SSID().c_str() : NULL);
+        bool conn = WiFi.isConnected();
+        String ssid = conn ? WiFi.SSID() : String();
+        ui_wifi_set_connected(conn ? ssid.c_str() : NULL);
+        ui_pole_set_wifi(conn, conn ? ssid.c_str() : NULL);
     }
 }
+
+/* ======================================================================== */
+/* Dados do poste                                                           */
+/* ======================================================================== */
+#if POLE_DEMO_DATA
+static void pole_demo_poll(void)
+{
+    static uint32_t last, n;
+    static float energy = 12.30f;
+    if (millis() - last < 1000) return;
+    last = millis();
+    n++;
+
+    float k = sinf(n * 0.3f);
+    ui_pole_data_t d = {};
+    d.voltage_v     = 221.0f + 4.0f * k;
+    d.lamp_on       = true;
+    d.dimming_pct   = 80;
+    d.power_factor  = 0.96f + 0.02f * k;
+    d.temperature_c = 41.0f + 2.0f * k;
+    d.ambient_lux   = 8.0f + 3.0f * k;
+    d.power_w       = 96.0f + 3.0f * k;
+    d.current_a     = d.power_w / (d.voltage_v * d.power_factor);
+    energy         += d.power_w / 3600000.0f;
+    d.energy_kwh    = energy;
+    ui_pole_update(&d);
+}
+#endif
+
+static void open_wifi_screen(void)  { ui_wifi_open(); }
+static void close_wifi_screen(void) { ui_pole_show(); }
 
 /* ======================================================================== */
 void setup()
@@ -252,8 +297,13 @@ void setup()
     ui_wifi_create();
     ui_wifi_set_scan_cb(on_scan_requested);
     ui_wifi_set_connect_cb(on_connect);
+    ui_wifi_set_back_cb(close_wifi_screen);
 
-    /* primeira busca automatica */
+    ui_pole_create(POLE_NAME);          /* tela inicial */
+    ui_pole_set_wifi_cb(open_wifi_screen);
+    ui_pole_set_wifi(false, NULL);
+
+    /* busca em segundo plano: a lista ja esta pronta ao abrir a tela de Wi-Fi */
     ui_wifi_scan_started();
     on_scan_requested();
 }
@@ -262,5 +312,8 @@ void loop()
 {
     lv_timer_handler();
     wifi_poll();
+#if POLE_DEMO_DATA
+    pole_demo_poll();
+#endif
     delay(5);
 }

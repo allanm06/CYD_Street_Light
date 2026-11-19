@@ -1,13 +1,17 @@
 /*
- * ui_wifi_preview.c - Ponto de entrada do LVGL Live Preview (VS Code).
+ * ui_preview.c - Ponto de entrada do LVGL Live Preview (VS Code).
  *
- * Simula scan e conexao Wi-Fi com dados falsos. No firmware o arquivo
- * compila vazio (LVGL_LIVE_PREVIEW so existe no preview).
- * Ajuste o preview para 320x240. Senha que "conecta": 12345678.
+ * Simula as leituras do poste e o Wi-Fi (scan e conexao) com dados falsos.
+ * No firmware o arquivo compila vazio (LVGL_LIVE_PREVIEW so existe no preview).
+ * Ajuste o preview para 320x240.
+ *   - Senha que "conecta": 12345678
+ *   - A cada 40 s o poste "some" por 10 s para mostrar o estado "Sem dados"
  */
 #ifdef LVGL_LIVE_PREVIEW
 
 #include "ui_wifi.h"
+#include "ui_pole.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -49,6 +53,7 @@ static void connect_done_cb(lv_timer_t *t)
 {
     (void)t;
     ui_wifi_connect_result(conn_ok, conn_ok ? "IP 192.168.0.42" : "Senha incorreta");
+    ui_pole_set_wifi(conn_ok, NULL);
 }
 
 static void on_connect(const ui_wifi_ap_t *ap, const char *password)
@@ -59,15 +64,46 @@ static void on_connect(const ui_wifi_ap_t *ap, const char *password)
     lv_timer_set_repeat_count(t, 1);
 }
 
+/* ---- Leituras simuladas do poste ---------------------------------------- */
+static void pole_mock_cb(lv_timer_t *t)
+{
+    (void)t;
+    static uint32_t n;
+    static float energy = 12.30f;
+    n++;
+    if (n % 40 >= 30) return;           /* simula queda do link */
+
+    float k = sinf(n * 0.3f);
+    ui_pole_data_t d = {
+        .voltage_v     = 221.0f + 4.0f * k,
+        .lamp_on       = true,
+        .dimming_pct   = 80,
+        .power_factor  = 0.96f + 0.02f * k,
+        .temperature_c = 41.0f + 2.0f * k,
+        .ambient_lux   = 8.0f + 3.0f * k,
+    };
+    d.power_w   = 96.0f + 3.0f * k;
+    d.current_a = d.power_w / (d.voltage_v * d.power_factor);
+    energy     += d.power_w / 3600000.0f;
+    d.energy_kwh = energy;
+    ui_pole_update(&d);
+}
+
+static void open_wifi(void) { ui_wifi_open(); }
+static void close_wifi(void) { ui_pole_show(); }
+
 void lvgl_live_preview_init(void)
 {
     ui_wifi_create();
     ui_wifi_set_scan_cb(on_scan);
     ui_wifi_set_connect_cb(on_connect);
+    ui_wifi_set_back_cb(close_wifi);
 
-    /* faz a primeira busca automaticamente, como no firmware */
-    ui_wifi_scan_started();
-    on_scan();
+    ui_pole_create("Poste 01");
+    ui_pole_set_wifi_cb(open_wifi);
+    ui_pole_set_wifi(false, NULL);
+
+    lv_timer_create(pole_mock_cb, 1000, NULL);
 }
 
 #endif /* LVGL_LIVE_PREVIEW */

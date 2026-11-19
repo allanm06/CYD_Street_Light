@@ -5,6 +5,7 @@
  * ASCII, por isso os textos nao tem acentos.
  */
 #include "ui_wifi.h"
+#include "ui_theme.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -12,20 +13,6 @@
 
 #define UI_WIFI_MAX_APS 32
 #define UI_WIFI_PASS_MAX 64
-
-/* ---- Paleta ------------------------------------------------------------ */
-#define COL_BG       lv_color_hex(0x0F172A)
-#define COL_HEADER   lv_color_hex(0x111C33)
-#define COL_CARD     lv_color_hex(0x1E293B)
-#define COL_CARD_PR  lv_color_hex(0x2B3A52)
-#define COL_BORDER   lv_color_hex(0x334155)
-#define COL_TEXT     lv_color_hex(0xE2E8F0)
-#define COL_MUTED    lv_color_hex(0x94A3B8)
-#define COL_ACCENT   lv_color_hex(0x38BDF8)
-#define COL_GOOD     lv_color_hex(0x22C55E)
-#define COL_FAIR     lv_color_hex(0xEAB308)
-#define COL_WEAK     lv_color_hex(0xEF4444)
-#define COL_BAR_OFF  lv_color_hex(0x3B4A60)
 
 /* ---- Estado ------------------------------------------------------------ */
 static struct {
@@ -50,8 +37,11 @@ static struct {
     ui_wifi_ap_t target;    /* rede da tentativa de conexao atual */
     char connected_ssid[33];
 
+    bool scanned_once;
+
     ui_wifi_scan_cb_t scan_cb;
     ui_wifi_connect_cb_t connect_cb;
+    ui_wifi_back_cb_t back_cb;
 } s;
 
 static void pwd_open(const ui_wifi_ap_t *ap);
@@ -638,11 +628,19 @@ static void scan_btn_cb(lv_event_t *e)
     if (s.scan_cb) s.scan_cb();
 }
 
+static void back_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    panel_close(&s.detail);
+    if (s.back_cb) s.back_cb();
+}
+
 static void header_create(void)
 {
     lv_obj_t *hdr = header_bar_create(s.scr);
-    lv_obj_set_style_pad_hor(hdr, 10, 0);
 
+    lv_obj_t *back = button_create(hdr, LV_SYMBOL_LEFT, false, back_btn_cb, NULL);
+    lv_obj_set_size(back, 34, 30);
     label_create(hdr, &lv_font_montserrat_18, COL_ACCENT, LV_SYMBOL_WIFI);
     lv_obj_t *title = label_create(hdr, &lv_font_montserrat_18, COL_TEXT, "Redes Wi-Fi");
     lv_obj_set_flex_grow(title, 1);
@@ -660,8 +658,7 @@ void ui_wifi_create(void)
 {
     memset(&s, 0, sizeof s);
 
-    s.scr = lv_screen_active();
-    lv_obj_clean(s.scr);
+    s.scr = lv_obj_create(NULL);       /* tela propria, aberta por ui_wifi_open() */
     lv_obj_remove_flag(s.scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(s.scr, COL_BG, 0);
     lv_obj_set_style_bg_opa(s.scr, LV_OPA_COVER, 0);
@@ -710,9 +707,21 @@ void ui_wifi_create(void)
 
 void ui_wifi_set_scan_cb(ui_wifi_scan_cb_t cb)       { s.scan_cb = cb; }
 void ui_wifi_set_connect_cb(ui_wifi_connect_cb_t cb) { s.connect_cb = cb; }
+void ui_wifi_set_back_cb(ui_wifi_back_cb_t cb)       { s.back_cb = cb; }
+
+void ui_wifi_open(void)
+{
+    lv_screen_load_anim(s.scr, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
+    /* primeira abertura sem busca feita/pedida: busca automaticamente */
+    if (!s.scanned_once) {
+        ui_wifi_scan_started();
+        if (s.scan_cb) s.scan_cb();
+    }
+}
 
 void ui_wifi_scan_started(void)
 {
+    s.scanned_once = true;
     panel_close(&s.detail);
     lv_obj_add_state(s.scan_btn, LV_STATE_DISABLED);
     lv_label_set_text(s.status_lbl, "Buscando...");

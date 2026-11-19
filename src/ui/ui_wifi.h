@@ -45,10 +45,17 @@ typedef void (*ui_wifi_scan_cb_t)(void);
  * O firmware deve tentar conectar e depois chamar ui_wifi_connect_result(). */
 typedef void (*ui_wifi_connect_cb_t)(const ui_wifi_ap_t *ap, const char *password);
 
+/* Usuario tocou em voltar no cabecalho. */
+typedef void (*ui_wifi_back_cb_t)(void);
+
+/* Cria a tela (sem carrega-la). */
 void ui_wifi_create(void);
+/* Carrega a tela de Wi-Fi; na primeira vez dispara uma busca. */
+void ui_wifi_open(void);
 
 void ui_wifi_set_scan_cb(ui_wifi_scan_cb_t cb);
 void ui_wifi_set_connect_cb(ui_wifi_connect_cb_t cb);
+void ui_wifi_set_back_cb(ui_wifi_back_cb_t cb);
 
 /* --- Scan --- */
 void ui_wifi_scan_started(void);
