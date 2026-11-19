@@ -1,13 +1,15 @@
 /*
  * ui_wifi_preview.c - Ponto de entrada do LVGL Live Preview (VS Code).
  *
- * Simula o scan Wi-Fi com dados falsos. NAO entra no build do ESP-IDF
- * (nao listar em main/CMakeLists.txt). Ajuste o preview para 320x240.
+ * Simula scan e conexao Wi-Fi com dados falsos. No firmware o arquivo
+ * compila vazio (LVGL_LIVE_PREVIEW so existe no preview).
+ * Ajuste o preview para 320x240. Senha que "conecta": 12345678.
  */
 #ifdef LVGL_LIVE_PREVIEW
 
 #include "ui_wifi.h"
 #include <stdio.h>
+#include <string.h>
 
 static const ui_wifi_ap_t mock_aps[] = {
     {"Arkmeds_Corp",       {0x48,0xAF,0xF3,0x10,0x22,0x01}, -48,  6, UI_WIFI_AUTH_WPA2},
@@ -39,9 +41,22 @@ static void on_scan(void)
     lv_timer_set_repeat_count(t, 1);
 }
 
-static void on_connect(const ui_wifi_ap_t *ap)
+/* Conexao simulada: redes abertas e a senha "12345678" conectam;
+ * qualquer outra senha falha com "Senha incorreta". */
+static bool conn_ok;
+
+static void connect_done_cb(lv_timer_t *t)
 {
-    printf("Conectar em \"%s\"\n", ap->ssid);
+    (void)t;
+    ui_wifi_connect_result(conn_ok, conn_ok ? "IP 192.168.0.42" : "Senha incorreta");
+}
+
+static void on_connect(const ui_wifi_ap_t *ap, const char *password)
+{
+    printf("Conectar em \"%s\" com senha \"%s\"\n", ap->ssid, password);
+    conn_ok = ap->auth == UI_WIFI_AUTH_OPEN || strcmp(password, "12345678") == 0;
+    lv_timer_t *t = lv_timer_create(connect_done_cb, 2000, NULL);
+    lv_timer_set_repeat_count(t, 1);
 }
 
 void lvgl_live_preview_init(void)

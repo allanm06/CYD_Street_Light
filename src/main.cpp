@@ -58,13 +58,29 @@ static void my_touchpad_read(lv_indev_t *indev, lv_indev_data_t *data)
 }
 
 /* ======================================================================== */
-/* Wi-Fi scan: roda numa task propria (bloqueante); o loop() so consome     */
-/* o resultado, entao todas as chamadas LVGL ficam na mesma thread.         */
+/* Wi-Fi: um worker (task propria) executa scan e conexao, que bloqueiam.   */
+/* O loop() so consome os resultados, entao o LVGL fica numa thread so.     */
 /* ======================================================================== */
-static TaskHandle_t s_scan_task;
+#define CONNECT_TIMEOUT_MS 15000
+
+typedef enum { CMD_SCAN, CMD_CONNECT } wifi_cmd_type_t;
+typedef struct {
+    wifi_cmd_type_t type;
+    ui_wifi_ap_t ap;
+    char pass[65];
+} wifi_cmd_t;
+
+static QueueHandle_t s_cmd_q;
+
+/* resultados (escritos pelo worker, lidos pelo loop) */
 static ui_wifi_ap_t s_aps[WIFI_MAX_APS];
-static volatile int16_t s_scan_result = 0;   /* >=0 redes, <0 erro */
-static volatile bool s_scan_ready = false;
+static volatile int16_t s_scan_result;
+static volatile bool s_scan_ready;
+static volatile bool s_conn_ready;
+static volatile bool s_conn_ok;
+static char s_conn_msg[48];
+
+static volatile uint8_t s_disc_reason;     /* ultimo motivo de desconexao */
 
 static ui_wifi_auth_t map_auth(wifi_auth_mode_t m)
 {
@@ -81,44 +97,118 @@ static ui_wifi_auth_t map_auth(wifi_auth_mode_t m)
     }
 }
 
-static void scan_task(void *arg)
+static bool reason_is_auth_fail(uint8_t r)
+{
+    return r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_AUTH_EXPIRE ||
+           r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT || r == WIFI_REASON_HANDSHAKE_TIMEOUT ||
+           r == WIFI_REASON_MIC_FAILURE;
+}
+
+static void do_scan(void)
+{
+    int16_t n = WiFi.scanNetworks(false /*bloqueante*/, true /*ocultas*/);
+    if (n > 0) {
+        if (n > WIFI_MAX_APS) n = WIFI_MAX_APS;
+        for (int16_t i = 0; i < n; i++) {
+            strlcpy(s_aps[i].ssid, WiFi.SSID(i).c_str(), sizeof s_aps[i].ssid);
+            memcpy(s_aps[i].bssid, WiFi.BSSID(i), 6);
+            s_aps[i].rssi = WiFi.RSSI(i);
+            s_aps[i].channel = WiFi.channel(i);
+            s_aps[i].auth = map_auth(WiFi.encryptionType(i));
+        }
+    }
+    WiFi.scanDelete();
+    Serial.printf("scan: %d\n", n);
+    s_scan_result = n;
+    s_scan_ready = true;
+}
+
+static void do_connect(const wifi_cmd_t *c)
+{
+    Serial.printf("conectando em \"%s\"...\n", c->ap.ssid);
+
+    if (WiFi.isConnected()) {
+        WiFi.disconnect();
+        delay(200);
+    }
+    s_disc_reason = 0;
+    WiFi.begin(c->ap.ssid, c->pass[0] ? c->pass : NULL, c->ap.channel, c->ap.bssid);
+
+    bool ok = false;
+    const char *err = "Tempo esgotado";
+    uint32_t t0 = millis();
+    while (millis() - t0 < CONNECT_TIMEOUT_MS) {
+        if (WiFi.status() == WL_CONNECTED) { ok = true; break; }
+        uint8_t r = s_disc_reason;
+        if (reason_is_auth_fail(r))          { err = "Senha incorreta"; break; }
+        if (r == WIFI_REASON_NO_AP_FOUND)    { err = "Rede nao encontrada"; break; }
+        delay(100);
+    }
+
+    if (ok) {
+        snprintf(s_conn_msg, sizeof s_conn_msg, "IP %s", WiFi.localIP().toString().c_str());
+    } else {
+        WiFi.disconnect();      /* para as tentativas automaticas */
+        if (s_disc_reason && strcmp(err, "Tempo esgotado") == 0)
+            snprintf(s_conn_msg, sizeof s_conn_msg, "Falha (motivo %u)", s_disc_reason);
+        else
+            strlcpy(s_conn_msg, err, sizeof s_conn_msg);
+    }
+    Serial.printf("conexao: %s (%s)\n", ok ? "ok" : "falhou", s_conn_msg);
+    s_conn_ok = ok;
+    s_conn_ready = true;
+}
+
+static void wifi_worker(void *arg)
 {
     (void)arg;
+    static wifi_cmd_t cmd;
     for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        int16_t n = WiFi.scanNetworks(false /*bloqueante*/, true /*ocultas*/);
-        if (n > 0) {
-            if (n > WIFI_MAX_APS) n = WIFI_MAX_APS;
-            for (int16_t i = 0; i < n; i++) {
-                strlcpy(s_aps[i].ssid, WiFi.SSID(i).c_str(), sizeof s_aps[i].ssid);
-                memcpy(s_aps[i].bssid, WiFi.BSSID(i), 6);
-                s_aps[i].rssi = WiFi.RSSI(i);
-                s_aps[i].channel = WiFi.channel(i);
-                s_aps[i].auth = map_auth(WiFi.encryptionType(i));
-            }
-        }
-        WiFi.scanDelete();
-        Serial.printf("scan: %d\n", n);
-        s_scan_result = n;
-        s_scan_ready = true;
+        if (xQueueReceive(s_cmd_q, &cmd, portMAX_DELAY) != pdTRUE) continue;
+        if (cmd.type == CMD_SCAN) do_scan();
+        else                      do_connect(&cmd);
+        memset(cmd.pass, 0, sizeof cmd.pass);
     }
 }
 
-/* chamado pela UI quando o botao de busca e tocado */
-static void on_scan_requested(void) { xTaskNotifyGive(s_scan_task); }
-
-static void on_connect(const ui_wifi_ap_t *ap)
+/* ---- callbacks da UI (thread do loop) ---------------------------------- */
+static void on_scan_requested(void)
 {
-    Serial.printf("Conectar em \"%s\" (ainda nao implementado)\n", ap->ssid);
+    static wifi_cmd_t c;
+    c.type = CMD_SCAN;
+    xQueueSend(s_cmd_q, &c, 0);
 }
 
+static void on_connect(const ui_wifi_ap_t *ap, const char *password)
+{
+    static wifi_cmd_t c;
+    c.type = CMD_CONNECT;
+    c.ap = *ap;
+    strlcpy(c.pass, password, sizeof c.pass);
+    if (xQueueSend(s_cmd_q, &c, 0) != pdTRUE)
+        ui_wifi_connect_result(false, "Ocupado, tente de novo");
+    memset(c.pass, 0, sizeof c.pass);
+}
+
+/* ---- entrega dos resultados para a UI (thread do loop) ----------------- */
 static void wifi_poll(void)
 {
-    if (!s_scan_ready) return;
-    s_scan_ready = false;
-    if (s_scan_result < 0) ui_wifi_show_error("Falha na busca");
-    else                   ui_wifi_show_results(s_aps, s_scan_result);
+    if (s_scan_ready) {
+        s_scan_ready = false;
+        if (s_scan_result < 0) ui_wifi_show_error("Falha na busca");
+        else                   ui_wifi_show_results(s_aps, s_scan_result);
+    }
+    if (s_conn_ready) {
+        s_conn_ready = false;
+        ui_wifi_connect_result(s_conn_ok, s_conn_msg);
+    }
+
+    /* acompanha quedas/reconexoes depois de conectado */
+    static uint32_t last;
+    if (millis() - last > 1000) {
+        last = millis();
+        ui_wifi_set_connected(WiFi.isConnected() ? WiFi.SSID().c_str() : NULL);
+    }
 }
 
 /* ======================================================================== */
@@ -149,10 +239,15 @@ void setup()
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, my_touchpad_read);
 
+    WiFi.persistent(false);     /* nao grava credenciais na flash */
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+        s_disc_reason = info.wifi_sta_disconnected.reason;
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     delay(100);
-    xTaskCreatePinnedToCore(scan_task, "wifi_scan", 4096, NULL, 1, &s_scan_task, 0);
+    s_cmd_q = xQueueCreate(2, sizeof(wifi_cmd_t));
+    xTaskCreatePinnedToCore(wifi_worker, "wifi", 4096, NULL, 1, NULL, 0);
 
     ui_wifi_create();
     ui_wifi_set_scan_cb(on_scan_requested);
@@ -160,7 +255,7 @@ void setup()
 
     /* primeira busca automatica */
     ui_wifi_scan_started();
-    xTaskNotifyGive(s_scan_task);
+    on_scan_requested();
 }
 
 void loop()
