@@ -79,3 +79,4 @@ Desktop.ini
 
 # PlatformIO
 .pio/
+.vscode/
