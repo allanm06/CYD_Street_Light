@@ -42,13 +42,49 @@ static bool ler_medicao(float *tensao_v, float *corrente_a)
 #endif
 }
 
+static volatile uint8_t s_disc_reason;
+
+/* Lista as redes visiveis e diz se WIFI_SSID esta entre elas. */
+static void wifi_diagnostico(void)
+{
+    int n = WiFi.scanNetworks();
+    bool achou = false;
+    Serial.printf("Wi-Fi: %d redes visiveis:\n", n);
+    for (int i = 0; i < n; i++) {
+        Serial.printf("  %-32s %4d dBm  canal %2d\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
+        if (WiFi.SSID(i) == WIFI_SSID) achou = true;
+    }
+    WiFi.scanDelete();
+    if (!achou)
+        Serial.printf("Wi-Fi: \"%s\" NAO encontrada (a ESP32 so enxerga 2,4 GHz)\n", WIFI_SSID);
+}
+
 static void wifi_conectar(void)
 {
-    Serial.printf("Wi-Fi: conectando em \"%s\"", WIFI_SSID);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print('.');
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+        s_disc_reason = info.wifi_sta_disconnected.reason;
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
+    for (;;) {
+        Serial.printf("Wi-Fi: conectando em \"%s\"", WIFI_SSID);
+        s_disc_reason = 0;
+        WiFi.begin(WIFI_SSID, WIFI_PASS);
+        uint32_t t0 = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
+            delay(500);
+            Serial.print('.');
+        }
+        if (WiFi.status() == WL_CONNECTED) break;
+
+        uint8_t r = s_disc_reason;
+        const char *txt = r == WIFI_REASON_NO_AP_FOUND ? "rede nao encontrada" :
+                          (r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+                           r == WIFI_REASON_HANDSHAKE_TIMEOUT || r == WIFI_REASON_AUTH_EXPIRE)
+                              ? "senha incorreta?" : "";
+        Serial.printf("\nWi-Fi: falhou (motivo %u %s)\n", r, txt);
+        WiFi.disconnect();
+        wifi_diagnostico();
+        delay(2000);
     }
     Serial.printf("\nWi-Fi: IP %s\n", WiFi.localIP().toString().c_str());
 }
