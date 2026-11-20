@@ -1,12 +1,19 @@
 # CYD Street Light - ESP32 medidora
 
-Firmware da **ESP32 do poste**: mede tensao e corrente e publica 1x por segundo
-via DDS. O display que mostra os dados (CYD, ESP32-2432S028) fica na branch
-`DDS_CYD_Implementation`.
+Firmware da **ESP32 do poste**: cria a propria rede Wi-Fi (Access Point), mede
+tensao e corrente e publica 1x por segundo via DDS. O display que mostra os dados
+(CYD, ESP32-2432S028) fica na branch `DDS_CYD_Implementation` e conecta nessa rede
+pela tela de Wi-Fi. Nao precisa de roteador.
+
+| Rede | Valor |
+|---|---|
+| Nome / senha | `WIFI_SSID` / `WIFI_PASS` em `src/credenciais.h` (senha com 8+ caracteres) |
+| IP da medidora | `192.168.4.1` (a CYD recebe IP por DHCP, `192.168.4.x`) |
+| Canal | 6, ate 4 clientes |
 
 A comunicacao e DDS/RTPS direto entre as placas (sem broker/agent), usando
 [embeddedRTPS](https://github.com/embedded-software-laboratory/embeddedRTPS).
-As placas se descobrem por multicast, entao precisam estar na **mesma rede**.
+As placas se descobrem por multicast dentro da rede da medidora.
 Topico `poste_medicao`, tipo `streetlight::Medicao` (IDL em `lib/StreetLightDDS/sl_dds.h`).
 
 Por enquanto a leitura e **simulada** (`MEDICAO_SIMULADA` em `src/main.cpp`);
@@ -16,15 +23,15 @@ o sensor real entra em `ler_medicao()`.
 
 | Caminho | Conteudo |
 |---|---|
-| `src/main.cpp` | Wi-Fi, leitura (simulada) e publicador DDS |
-| `src/credenciais.h.example` | Modelo das credenciais Wi-Fi |
+| `src/main.cpp` | Rede Wi-Fi (AP), leitura (simulada) e publicador DDS |
+| `src/credenciais.h.example` | Modelo do nome/senha da rede criada |
 | `lib/StreetLightDDS` | Topico DDS (igual na branch da CYD) |
 | `lib/embeddedRTPS`, `lib/MicroCDR` | Copias das bibliotecas (ver "embeddedRTPS na ESP32") |
 
 ## Compilar e gravar
 
 ```sh
-cp src/credenciais.h.example src/credenciais.h   # e preencha SSID/senha
+cp src/credenciais.h.example src/credenciais.h   # nome/senha da rede do poste
 pio run -t upload --upload-port /dev/ttyUSB0
 pio device monitor
 ```

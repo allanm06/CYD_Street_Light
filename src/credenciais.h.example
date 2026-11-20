@@ -1,6 +1,7 @@
 /* Copie para credenciais.h (ignorado pelo git) e preencha.
- * A rede precisa ser a mesma da CYD (descoberta DDS por multicast). */
+ * Nome e senha da rede Wi-Fi CRIADA pela medidora; a CYD conecta nela.
+ * Senha: 8 caracteres ou mais (WPA2), ou "" para rede aberta. */
 #pragma once
 
-#define WIFI_SSID "minha_rede"
+#define WIFI_SSID "Poste_01"
 #define WIFI_PASS "minha_senha"

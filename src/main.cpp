@@ -1,16 +1,20 @@
 /*
  * Medidor do poste (Smart Street Light) - ESP32 generica.
  *
- * Mede tensao e corrente e publica 1x por segundo no topico DDS
- * SL_DDS_TOPIC (lib/StreetLightDDS). A CYD (branch DDS_CYD_Implementation)
- * assina o mesmo topico.
+ * Cria a propria rede Wi-Fi (Access Point) e publica 1x por segundo a tensao
+ * e a corrente no topico DDS SL_DDS_TOPIC (lib/StreetLightDDS). A CYD
+ * (branch DDS_CYD_Implementation) conecta nessa rede e assina o topico.
+ * Nao precisa de roteador: a medidora e sempre AP_IP (192.168.4.1) e
+ * entrega IP por DHCP para quem conectar.
  *
- * Wi-Fi: copie src/credenciais.h.example para src/credenciais.h e preencha.
+ * Rede: copie src/credenciais.h.example para src/credenciais.h e preencha
+ *       (WIFI_SSID / WIFI_PASS = nome e senha da rede CRIADA pela medidora).
  *
  * Compilar/gravar:  pio run -t upload --upload-port /dev/ttyUSB0
  */
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <math.h>
 
 #include "sl_dds.h"
@@ -21,8 +25,16 @@
 #error "Crie src/credenciais.h a partir de src/credenciais.h.example"
 #endif
 
+static_assert(sizeof(WIFI_PASS) - 1 >= 8 || sizeof(WIFI_PASS) == 1,
+              "WIFI_PASS precisa ter 8+ caracteres (WPA2) ou ser vazia (rede aberta)");
+
 #define POSTE_ID        1
 #define PERIODO_MS      1000
+
+#define AP_CANAL        6
+#define AP_MAX_CLIENTES 4
+static const IPAddress AP_IP(192, 168, 4, 1);
+static const IPAddress AP_MASK(255, 255, 255, 0);
 
 /* 1 = gera valores falsos (sem sensor ligado). Troque por 0 ao implementar
  * ler_medicao() com o sensor real (ex.: PZEM-004T, ZMPT101B + SCT-013). */
@@ -42,62 +54,58 @@ static bool ler_medicao(float *tensao_v, float *corrente_a)
 #endif
 }
 
-static volatile uint8_t s_disc_reason;
-
-/* Lista as redes visiveis e diz se WIFI_SSID esta entre elas. */
-static void wifi_diagnostico(void)
+static void wifi_eventos(WiFiEvent_t ev, WiFiEventInfo_t info)
 {
-    int n = WiFi.scanNetworks();
-    bool achou = false;
-    Serial.printf("Wi-Fi: %d redes visiveis:\n", n);
-    for (int i = 0; i < n; i++) {
-        Serial.printf("  %-32s %4d dBm  canal %2d\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
-        if (WiFi.SSID(i) == WIFI_SSID) achou = true;
+    switch (ev) {
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED: {
+        const uint8_t *m = info.wifi_ap_staconnected.mac;
+        Serial.printf("Wi-Fi: cliente conectou %02x:%02x:%02x:%02x:%02x:%02x (%d na rede)\n",
+                      m[0], m[1], m[2], m[3], m[4], m[5], WiFi.softAPgetStationNum());
+        break;
     }
-    WiFi.scanDelete();
-    if (!achou)
-        Serial.printf("Wi-Fi: \"%s\" NAO encontrada (a ESP32 so enxerga 2,4 GHz)\n", WIFI_SSID);
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+        Serial.printf("Wi-Fi: cliente saiu (%d na rede)\n", WiFi.softAPgetStationNum());
+        break;
+    case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED: {
+        IPAddress ip(info.wifi_ap_staipassigned.ip.addr);
+        Serial.printf("Wi-Fi: cliente recebeu IP %s\n", ip.toString().c_str());
+        break;
+    }
+    default:
+        break;
+    }
 }
 
-static void wifi_conectar(void)
+static bool wifi_criar_rede(void)
 {
-    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
-        s_disc_reason = info.wifi_sta_disconnected.reason;
-    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-
-    for (;;) {
-        Serial.printf("Wi-Fi: conectando em \"%s\"", WIFI_SSID);
-        s_disc_reason = 0;
-        WiFi.begin(WIFI_SSID, WIFI_PASS);
-        uint32_t t0 = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
-            delay(500);
-            Serial.print('.');
-        }
-        if (WiFi.status() == WL_CONNECTED) break;
-
-        uint8_t r = s_disc_reason;
-        const char *txt = r == WIFI_REASON_NO_AP_FOUND ? "rede nao encontrada" :
-                          (r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
-                           r == WIFI_REASON_HANDSHAKE_TIMEOUT || r == WIFI_REASON_AUTH_EXPIRE)
-                              ? "senha incorreta?" : "";
-        Serial.printf("\nWi-Fi: falhou (motivo %u %s)\n", r, txt);
-        WiFi.disconnect();
-        wifi_diagnostico();
-        delay(2000);
+    WiFi.persistent(false);
+    WiFi.onEvent(wifi_eventos);
+    /* So AP (sem STA): a interface do AP vira a padrao do lwIP, que e a
+     * usada pelo embeddedRTPS para multicast e para checar a sub-rede. */
+    WiFi.mode(WIFI_AP);
+    WiFi.softAPConfig(AP_IP, AP_IP, AP_MASK);
+    const char *senha = sizeof(WIFI_PASS) > 1 ? WIFI_PASS : NULL;
+    if (!WiFi.softAP(WIFI_SSID, senha, AP_CANAL, 0 /*visivel*/, AP_MAX_CLIENTES)) {
+        Serial.println("Wi-Fi: falha ao criar a rede");
+        return false;
     }
-    Serial.printf("\nWi-Fi: IP %s\n", WiFi.localIP().toString().c_str());
+    esp_wifi_set_ps(WIFI_PS_NONE);  /* sem economia de energia: multicast da descoberta DDS */
+    Serial.printf("Wi-Fi: rede \"%s\" criada (%s), canal %d, IP %s\n", WIFI_SSID,
+                  senha ? "WPA2" : "aberta", AP_CANAL, WiFi.softAPIP().toString().c_str());
+    return true;
 }
 
 void setup()
 {
     Serial.begin(115200);
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);   /* economia de energia derruba multicast (descoberta DDS) */
-    wifi_conectar();
+    delay(200);
 
-    if (!sl_dds_start_publisher((uint32_t)WiFi.localIP()))
+    if (!wifi_criar_rede()) {
+        delay(3000);
+        ESP.restart();
+    }
+
+    if (!sl_dds_start_publisher((uint32_t)WiFi.softAPIP()))
         Serial.println("DDS: falha ao iniciar");
 }
 
@@ -107,17 +115,14 @@ void loop()
     if (millis() - last < PERIODO_MS) { delay(10); return; }
     last = millis();
 
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("Wi-Fi: caiu, aguardando reconexao");
-        return;     /* o driver reconecta sozinho */
-    }
-
     sl_medicao_t m = {};
     m.poste_id = POSTE_ID;
     m.seq = ++seq;
     if (!ler_medicao(&m.tensao_v, &m.corrente_a)) return;
 
+    /* publica mesmo sem clientes: quem conectar recebe a partir dai */
     bool ok = sl_dds_publish(&m);
-    Serial.printf("#%lu  %.1f V  %.3f A  %s\n", (unsigned long)m.seq,
-                  m.tensao_v, m.corrente_a, ok ? "" : "(falha ao publicar)");
+    Serial.printf("#%lu  %.1f V  %.3f A  [%d na rede]%s\n", (unsigned long)m.seq,
+                  m.tensao_v, m.corrente_a, WiFi.softAPgetStationNum(),
+                  ok ? "" : "  (falha ao publicar)");
 }
