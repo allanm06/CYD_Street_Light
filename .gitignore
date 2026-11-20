@@ -80,3 +80,6 @@ Desktop.ini
 # PlatformIO
 .pio/
 .vscode/
+
+# Credenciais Wi-Fi da medidora
+src/credenciais.h

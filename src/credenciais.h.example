@@ -1,0 +1,6 @@
+/* Copie para credenciais.h (ignorado pelo git) e preencha.
+ * A rede precisa ser a mesma da CYD (descoberta DDS por multicast). */
+#pragma once
+
+#define WIFI_SSID "minha_rede"
+#define WIFI_PASS "minha_senha"
