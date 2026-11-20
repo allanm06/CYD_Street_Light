@@ -1,0 +1,10 @@
+{
+  "name": "MicroCDR",
+  "version": "2.0.0",
+  "description": "eProsima Micro-CDR (Apache-2.0), copia de embeddedRTPS/thirdparty/Micro-CDR.",
+  "license": "Apache-2.0",
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  }
+}

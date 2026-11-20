@@ -1,0 +1,7 @@
+{
+  "name": "StreetLightDDS",
+  "version": "0.1.0",
+  "description": "Topico DDS do Smart Street Light (medicao de tensao e corrente) sobre embeddedRTPS.",
+  "dependencies": [{ "name": "embeddedRTPS" }, { "name": "MicroCDR" }],
+  "build": { "flags": ["-std=gnu++17"] }
+}

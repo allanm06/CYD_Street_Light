@@ -1,7 +1,7 @@
 /*
- * ui_pole.h - Tela principal: estado de um poste (Smart Street Light).
+ * ui_pole.h - Tela principal: tensao e corrente de um poste (Smart Street Light).
  *
- * As leituras sao feitas por outra ESP32 no poste e chegam via Wi-Fi/DDS.
+ * As leituras sao feitas pela ESP medidora do poste e chegam via Wi-Fi/DDS.
  * O firmware converte a mensagem recebida em ui_pole_data_t e chama
  * ui_pole_update(). Se nenhuma leitura chegar em UI_POLE_STALE_MS, a tela
  * indica "Sem dados".
@@ -23,13 +23,7 @@ extern "C" {
 typedef struct {
     float voltage_v;        /* tensao RMS (V) */
     float current_a;        /* corrente RMS (A) */
-    float power_w;          /* potencia ativa (W) */
-    float power_factor;     /* 0..1 */
-    float energy_kwh;       /* energia acumulada (kWh) */
-    float temperature_c;    /* temperatura do driver/luminaria (C) */
-    float ambient_lux;      /* luz ambiente (lux) */
-    bool lamp_on;
-    uint8_t dimming_pct;    /* 0..100 */
+    uint32_t seq;           /* numero da amostra enviada pelo medidor */
 } ui_pole_data_t;
 
 /* Tocou no icone de Wi-Fi do cabecalho. */

@@ -3,11 +3,13 @@
  *
  * Layout:
  *   [ Poste 01   * Online                     (wifi) ]  cabecalho
- *   [ (o) Lampada ligada  [=====   ] 80%    12 lux    ]  faixa da lampada
- *   [ Tensao      ][ Corrente    ][ Potencia    ]
- *   [ Fator pot.  ][ Energia     ][ Temperatura ]
+ *   [  Tensao (V)          ][  Corrente (A)         ]
+ *   [                      ][                       ]
+ *   [    221.4             ][    0.452              ]  valores grandes
+ *   [  Normal              ][                       ]
+ *   [ DDS: poste_medicao                 Amostra #12 ]  rodape
  *
- * Fontes: Montserrat 12, 14, 18 e 24 (somente ASCII, sem acentos).
+ * Fontes: Montserrat 12, 14, 18 e 48 (somente ASCII, sem acentos).
  */
 #include "ui_pole.h"
 #include "ui_theme.h"
@@ -19,22 +21,17 @@ typedef enum { LVL_OK, LVL_WARN, LVL_ALARM } level_t;
 
 typedef struct {
     lv_obj_t *value;
-    lv_obj_t *unit;
+    lv_obj_t *note;
 } tile_t;
 
-enum { T_VOLT, T_CURR, T_POWER, T_PF, T_ENERGY, T_TEMP, T_COUNT };
+enum { T_VOLT, T_CURR, T_COUNT };
 
 static struct {
     lv_obj_t *scr;
     lv_obj_t *status_dot;
     lv_obj_t *status_lbl;
     lv_obj_t *wifi_lbl;
-
-    lv_obj_t *lamp_dot;
-    lv_obj_t *lamp_lbl;
-    lv_obj_t *dim_bar;
-    lv_obj_t *dim_lbl;
-    lv_obj_t *lux_lbl;
+    lv_obj_t *seq_lbl;
 
     tile_t tiles[T_COUNT];
 
@@ -76,16 +73,6 @@ static lv_obj_t *dot_create(lv_obj_t *parent, int32_t size, lv_color_t color)
     return d;
 }
 
-static lv_obj_t *card_create(lv_obj_t *parent)
-{
-    lv_obj_t *c = lv_obj_create(parent);
-    style_plain(c);
-    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(c, COL_CARD, 0);
-    lv_obj_set_style_radius(c, 8, 0);
-    return c;
-}
-
 static lv_color_t level_color(level_t l)
 {
     switch (l) {
@@ -103,18 +90,10 @@ static level_t level_voltage(float v)
     return LVL_ALARM;
 }
 
-static level_t level_pf(float pf, bool lamp_on)
+static const char *level_voltage_txt(level_t l, float v)
 {
-    if (!lamp_on || pf >= 0.92f) return LVL_OK;     /* 0,92 = minimo ANEEL */
-    if (pf >= 0.85f) return LVL_WARN;
-    return LVL_ALARM;
-}
-
-static level_t level_temp(float t)
-{
-    if (t < 60.0f) return LVL_OK;
-    if (t < 75.0f) return LVL_WARN;
-    return LVL_ALARM;
+    if (l == LVL_OK) return "Normal";
+    return v < 220.0f ? "Tensao baixa" : "Tensao alta";
 }
 
 /* ======================================================================== */
@@ -166,100 +145,56 @@ static void header_create(const char *name)
     lv_obj_center(s.wifi_lbl);
 }
 
-static void lamp_strip_create(lv_obj_t *parent)
+static void tile_create(lv_obj_t *parent, int idx, const char *title, const char *unit)
 {
-    lv_obj_t *c = card_create(parent);
-    lv_obj_set_size(c, lv_pct(100), 34);
-    lv_obj_set_style_pad_hor(c, 10, 0);
-    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(c, 8, 0);
-
-    s.lamp_dot = dot_create(c, 14, COL_BAR_OFF);
-    s.lamp_lbl = label_create(c, &lv_font_montserrat_14, COL_TEXT, "Lampada --");
-
-    s.dim_bar = lv_bar_create(c);
-    lv_obj_set_size(s.dim_bar, 60, 8);
-    lv_bar_set_range(s.dim_bar, 0, 100);
-    lv_obj_set_style_bg_color(s.dim_bar, COL_BAR_OFF, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s.dim_bar, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s.dim_bar, COL_LAMP, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(s.dim_bar, 4, LV_PART_MAIN);
-    lv_obj_set_style_radius(s.dim_bar, 4, LV_PART_INDICATOR);
-
-    s.dim_lbl = label_create(c, &lv_font_montserrat_12, COL_MUTED, "--%");
-    lv_obj_set_flex_grow(s.dim_lbl, 1);
-
-    s.lux_lbl = label_create(c, &lv_font_montserrat_12, COL_MUTED, "-- lux");
-}
-
-static void tile_create(lv_obj_t *grid, int idx, int col, int row,
-                        const char *title, const char *unit)
-{
-    lv_obj_t *c = card_create(grid);
-    lv_obj_set_grid_cell(c, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
+    lv_obj_t *c = lv_obj_create(parent);
+    style_plain(c);
+    lv_obj_set_height(c, lv_pct(100));
+    lv_obj_set_flex_grow(c, 1);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(c, COL_CARD, 0);
+    lv_obj_set_style_radius(c, 8, 0);
     lv_obj_set_style_pad_all(c, 8, 0);
     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    label_create(c, &lv_font_montserrat_12, COL_MUTED, title);
+    /* titulo: "Tensao  V" */
+    lv_obj_t *trow = lv_obj_create(c);
+    style_plain(trow);
+    lv_obj_set_size(trow, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(trow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(trow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    label_create(trow, &lv_font_montserrat_14, COL_MUTED, title);
+    label_create(trow, &lv_font_montserrat_18, COL_ACCENT, unit);
 
-    lv_obj_t *vrow = lv_obj_create(c);
-    style_plain(vrow);
-    lv_obj_set_size(vrow, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(vrow, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(vrow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-    lv_obj_set_style_pad_column(vrow, 3, 0);
-
-    s.tiles[idx].value = label_create(vrow, &lv_font_montserrat_24, COL_MUTED, "--");
-    s.tiles[idx].unit = label_create(vrow, &lv_font_montserrat_12, COL_MUTED, unit);
-    lv_obj_set_style_pad_bottom(s.tiles[idx].unit, 3, 0);
+    s.tiles[idx].value = label_create(c, &lv_font_montserrat_48, COL_MUTED, "--");
+    s.tiles[idx].note = label_create(c, &lv_font_montserrat_12, COL_MUTED, " ");
 }
 
 /* ======================================================================== */
 /* Atualizacao                                                              */
 /* ======================================================================== */
-static void tile_set(int idx, const char *txt, level_t lvl, bool stale)
-{
-    lv_label_set_text(s.tiles[idx].value, txt);
-    lv_obj_set_style_text_color(s.tiles[idx].value, stale ? COL_MUTED : level_color(lvl), 0);
-}
-
 static void render(bool stale)
 {
     const ui_pole_data_t *d = &s.data;
     char buf[24];
 
+    level_t lv = level_voltage(d->voltage_v);
     snprintf(buf, sizeof buf, "%.1f", d->voltage_v);
-    tile_set(T_VOLT, buf, level_voltage(d->voltage_v), stale);
+    lv_label_set_text(s.tiles[T_VOLT].value, buf);
+    lv_obj_set_style_text_color(s.tiles[T_VOLT].value, stale ? COL_MUTED : level_color(lv), 0);
+    lv_label_set_text(s.tiles[T_VOLT].note, level_voltage_txt(lv, d->voltage_v));
+    lv_obj_set_style_text_color(s.tiles[T_VOLT].note,
+                                stale || lv == LVL_OK ? COL_MUTED : level_color(lv), 0);
 
-    snprintf(buf, sizeof buf, "%.2f", d->current_a);
-    tile_set(T_CURR, buf, LVL_OK, stale);
+    float a = d->current_a;
+    snprintf(buf, sizeof buf, a < 10.0f ? "%.3f" : "%.2f", a);
+    lv_label_set_text(s.tiles[T_CURR].value, buf);
+    lv_obj_set_style_text_color(s.tiles[T_CURR].value, stale ? COL_MUTED : COL_TEXT, 0);
+    snprintf(buf, sizeof buf, "~%.0f VA", d->voltage_v * a);
+    lv_label_set_text(s.tiles[T_CURR].note, buf);
 
-    snprintf(buf, sizeof buf, d->power_w < 1000.0f ? "%.1f" : "%.0f", d->power_w);
-    tile_set(T_POWER, buf, LVL_OK, stale);
-
-    snprintf(buf, sizeof buf, "%.2f", d->power_factor);
-    tile_set(T_PF, buf, level_pf(d->power_factor, d->lamp_on), stale);
-
-    float e = d->energy_kwh;
-    snprintf(buf, sizeof buf, e < 100.0f ? "%.2f" : (e < 1000.0f ? "%.1f" : "%.0f"), e);
-    tile_set(T_ENERGY, buf, LVL_OK, stale);
-
-    snprintf(buf, sizeof buf, "%.1f", d->temperature_c);
-    tile_set(T_TEMP, buf, level_temp(d->temperature_c), stale);
-
-    /* lampada */
-    lv_color_t lamp = stale ? COL_MUTED : (d->lamp_on ? COL_LAMP : COL_BAR_OFF);
-    lv_obj_set_style_bg_color(s.lamp_dot, lamp, 0);
-    lv_obj_set_style_shadow_width(s.lamp_dot, d->lamp_on && !stale ? 10 : 0, 0);
-    lv_obj_set_style_shadow_color(s.lamp_dot, COL_LAMP, 0);
-    lv_label_set_text(s.lamp_lbl, d->lamp_on ? "Lampada ligada" : "Lampada desligada");
-    lv_obj_set_style_text_color(s.lamp_lbl, stale ? COL_MUTED : COL_TEXT, 0);
-    lv_bar_set_value(s.dim_bar, d->lamp_on ? d->dimming_pct : 0, LV_ANIM_ON);
-    lv_label_set_text_fmt(s.dim_lbl, "%u%%", d->lamp_on ? d->dimming_pct : 0);
-    snprintf(buf, sizeof buf, "%.0f lux", d->ambient_lux);
-    lv_label_set_text(s.lux_lbl, buf);
+    lv_label_set_text_fmt(s.seq_lbl, "Amostra #%lu", (unsigned long)d->seq);
 }
 
 static void status_set(lv_color_t c, const char *txt)
@@ -316,29 +251,21 @@ void ui_pole_create(const char *pole_name)
     lv_obj_set_width(body, lv_pct(100));
     lv_obj_set_flex_grow(body, 1);
     lv_obj_set_style_pad_all(body, 6, 0);
-    lv_obj_set_style_pad_row(body, 6, 0);
-    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_column(body, 6, 0);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
 
-    lamp_strip_create(body);
+    tile_create(body, T_VOLT, "Tensao", "V");
+    tile_create(body, T_CURR, "Corrente", "A");
 
-    static const int32_t cols[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    static const int32_t rows[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    lv_obj_t *grid = lv_obj_create(body);
-    style_plain(grid);
-    lv_obj_set_width(grid, lv_pct(100));
-    lv_obj_set_flex_grow(grid, 1);
-    lv_obj_set_style_grid_column_dsc_array(grid, cols, 0);
-    lv_obj_set_style_grid_row_dsc_array(grid, rows, 0);
-    lv_obj_set_layout(grid, LV_LAYOUT_GRID);
-    lv_obj_set_style_pad_column(grid, 6, 0);
-    lv_obj_set_style_pad_row(grid, 6, 0);
-
-    tile_create(grid, T_VOLT,   0, 0, "Tensao",      "V");
-    tile_create(grid, T_CURR,   1, 0, "Corrente",    "A");
-    tile_create(grid, T_POWER,  2, 0, "Potencia",    "W");
-    tile_create(grid, T_PF,     0, 1, "Fator pot.",  "");
-    tile_create(grid, T_ENERGY, 1, 1, "Energia",     "kWh");
-    tile_create(grid, T_TEMP,   2, 1, "Temperatura", "C");
+    /* rodape */
+    lv_obj_t *ft = lv_obj_create(s.scr);
+    style_plain(ft);
+    lv_obj_set_size(ft, lv_pct(100), 20);
+    lv_obj_set_style_pad_hor(ft, 10, 0);
+    lv_obj_set_flex_flow(ft, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(ft, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    label_create(ft, &lv_font_montserrat_12, COL_MUTED, "DDS: poste_medicao");
+    s.seq_lbl = label_create(ft, &lv_font_montserrat_12, COL_MUTED, "");
 
     lv_timer_create(freshness_timer_cb, 500, NULL);
     lv_screen_load(s.scr);

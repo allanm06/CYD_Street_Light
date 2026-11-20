@@ -1,9 +1,10 @@
 /*
  * CYD Street Light - painel de um poste (Smart Street Light).
  *
- * Outra ESP32 no poste le os sensores (tensao, corrente, potencia...) e
- * envia via Wi-Fi/DDS; esta CYD mostra os dados. O icone de Wi-Fi no
- * cabecalho abre a tela de redes.
+ * A ESP medidora do poste (branch DDS_ESP32_Implementation) mede tensao e corrente e publica
+ * via DDS/RTPS (lib/StreetLightDDS); esta CYD assina o topico e mostra os
+ * dados. O icone de Wi-Fi no cabecalho abre a tela de redes; o DDS inicia
+ * sozinho na primeira vez que o Wi-Fi obtem IP.
  *
  * Placa: ESP32-2432S028 ("Cheap Yellow Display")
  * Display/touch inicializados igual ao projeto CYD_Ecg (TFT_eSPI + XPT2046).
@@ -17,12 +18,13 @@
 
 #include "ui/ui_wifi.h"
 #include "ui/ui_pole.h"
+#include "sl_dds.h"
 
 #define POLE_NAME "Poste 01"
 
-/* Enquanto o DDS nao esta integrado, gera leituras falsas (1 por segundo)
- * para visualizar a tela. Coloque 0 para mostrar "Aguardando dados". */
-#define POLE_DEMO_DATA 1
+/* 1 = gera leituras falsas (1 por segundo) para ver a tela sem o medidor.
+ * Com 0 a tela mostra os dados recebidos via DDS. */
+#define POLE_DEMO_DATA 0
 
 /* ---- Touch (barramento VSPI proprio) ----------------------------------- */
 #define XPT2046_IRQ  36
@@ -226,29 +228,75 @@ static void wifi_poll(void)
 }
 
 /* ======================================================================== */
-/* Dados do poste                                                           */
+/* Dados do poste (DDS)                                                     */
+/* A callback roda na task de recepcao do RTPS; ela so guarda a amostra     */
+/* mais recente e o loop() a entrega ao LVGL.                               */
 /* ======================================================================== */
+static portMUX_TYPE s_sample_mux = portMUX_INITIALIZER_UNLOCKED;
+static sl_medicao_t s_sample;
+static volatile bool s_sample_ready;
+static uint32_t s_dds_ip;          /* IP com que o DDS foi iniciado */
+
+static void on_medicao(const sl_medicao_t *m)
+{
+    portENTER_CRITICAL(&s_sample_mux);
+    s_sample = *m;
+    s_sample_ready = true;
+    portEXIT_CRITICAL(&s_sample_mux);
+}
+
+static void dds_poll(void)
+{
+    /* inicia na primeira vez que ha IP */
+    if (!sl_dds_started()) {
+        if (!WiFi.isConnected()) return;
+        s_dds_ip = (uint32_t)WiFi.localIP();
+        if (s_dds_ip == 0) return;
+        Serial.printf("DDS: iniciando assinante em %s\n", WiFi.localIP().toString().c_str());
+        if (!sl_dds_start_subscriber(s_dds_ip, on_medicao))
+            Serial.println("DDS: falha ao iniciar");
+        return;
+    }
+
+    if (!s_sample_ready) return;
+    sl_medicao_t m;
+    portENTER_CRITICAL(&s_sample_mux);
+    m = s_sample;
+    s_sample_ready = false;
+    portEXIT_CRITICAL(&s_sample_mux);
+
+    ui_pole_data_t d = {};
+    d.voltage_v = m.tensao_v;
+    d.current_a = m.corrente_a;
+    d.seq = m.seq;
+    ui_pole_update(&d);
+}
+
+/* O IP anunciado na descoberta e fixado ao iniciar o DDS. Se mudar
+ * (outra rede/novo lease), o medidor nao alcanca mais a CYD. */
+static void dds_check_ip(void)
+{
+    static uint32_t last;
+    if (!sl_dds_started() || millis() - last < 5000) return;
+    last = millis();
+    uint32_t ip = WiFi.isConnected() ? (uint32_t)WiFi.localIP() : 0;
+    if (ip && ip != s_dds_ip)
+        Serial.println("DDS: IP mudou desde o inicio do DDS; reinicie a CYD");
+}
+
 #if POLE_DEMO_DATA
 static void pole_demo_poll(void)
 {
     static uint32_t last, n;
-    static float energy = 12.30f;
     if (millis() - last < 1000) return;
     last = millis();
     n++;
 
     float k = sinf(n * 0.3f);
     ui_pole_data_t d = {};
-    d.voltage_v     = 221.0f + 4.0f * k;
-    d.lamp_on       = true;
-    d.dimming_pct   = 80;
-    d.power_factor  = 0.96f + 0.02f * k;
-    d.temperature_c = 41.0f + 2.0f * k;
-    d.ambient_lux   = 8.0f + 3.0f * k;
-    d.power_w       = 96.0f + 3.0f * k;
-    d.current_a     = d.power_w / (d.voltage_v * d.power_factor);
-    energy         += d.power_w / 3600000.0f;
-    d.energy_kwh    = energy;
+    d.voltage_v = 221.0f + 4.0f * k;
+    d.current_a = 0.45f + 0.03f * k;
+    d.seq = n;
     ui_pole_update(&d);
 }
 #endif
@@ -286,6 +334,7 @@ void setup()
 
     WiFi.persistent(false);     /* nao grava credenciais na flash */
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);       /* economia de energia derruba multicast (descoberta DDS) */
     WiFi.disconnect();
     WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
         s_disc_reason = info.wifi_sta_disconnected.reason;
@@ -314,6 +363,9 @@ void loop()
     wifi_poll();
 #if POLE_DEMO_DATA
     pole_demo_poll();
+#else
+    dds_poll();
+    dds_check_ip();
 #endif
     delay(5);
 }

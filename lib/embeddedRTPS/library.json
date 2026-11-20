@@ -1,0 +1,20 @@
+{
+  "name": "embeddedRTPS",
+  "version": "0.0.0+2932c64",
+  "description": "embeddedRTPS (RWTH Aachen i11), MIT. Copia de github.com/embedded-software-laboratory/embeddedRTPS @2932c64 com rtps/config.h para ESP32.",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "MicroCDR"
+    }
+  ],
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src",
+    "flags": [
+      "-std=gnu++17",
+      "-Wno-missing-field-initializers",
+      "-Iinclude/esp32_compat"
+    ]
+  }
+}

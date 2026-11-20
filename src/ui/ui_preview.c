@@ -1,7 +1,7 @@
 /*
  * ui_preview.c - Ponto de entrada do LVGL Live Preview (VS Code).
  *
- * Simula as leituras do poste e o Wi-Fi (scan e conexao) com dados falsos.
+ * Simula as leituras do poste (tensao/corrente) e o Wi-Fi (scan e conexao) com dados falsos.
  * No firmware o arquivo compila vazio (LVGL_LIVE_PREVIEW so existe no preview).
  * Ajuste o preview para 320x240.
  *   - Senha que "conecta": 12345678
@@ -69,23 +69,15 @@ static void pole_mock_cb(lv_timer_t *t)
 {
     (void)t;
     static uint32_t n;
-    static float energy = 12.30f;
     n++;
     if (n % 40 >= 30) return;           /* simula queda do link */
 
     float k = sinf(n * 0.3f);
     ui_pole_data_t d = {
-        .voltage_v     = 221.0f + 4.0f * k,
-        .lamp_on       = true,
-        .dimming_pct   = 80,
-        .power_factor  = 0.96f + 0.02f * k,
-        .temperature_c = 41.0f + 2.0f * k,
-        .ambient_lux   = 8.0f + 3.0f * k,
+        .voltage_v = 221.0f + 25.0f * k,   /* passa pelas faixas normal/alerta */
+        .current_a = 0.45f + 0.03f * k,
+        .seq       = n,
     };
-    d.power_w   = 96.0f + 3.0f * k;
-    d.current_a = d.power_w / (d.voltage_v * d.power_factor);
-    energy     += d.power_w / 3600000.0f;
-    d.energy_kwh = energy;
     ui_pole_update(&d);
 }
 
