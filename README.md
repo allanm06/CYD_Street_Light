@@ -16,14 +16,16 @@ A comunicacao e DDS/RTPS direto entre as placas (sem broker/agent), usando
 As placas se descobrem por multicast dentro da rede da medidora.
 Topico `poste_medicao`, tipo `streetlight::Medicao` (IDL em `lib/StreetLightDDS/sl_dds.h`).
 
-Por enquanto a leitura e **simulada** (`MEDICAO_SIMULADA` em `src/main.cpp`);
-o sensor real entra em `ler_medicao()`.
+A **corrente** e lida de um transformador de corrente ZMCT103C (1000:1) no GPIO34
+(`src/sensor_corrente.*`: ligacao, resistor de carga e calibracao no comentario).
+A **tensao** ainda e simulada (`TENSAO_SIMULADA` em `src/main.cpp`).
 
 ## Estrutura
 
 | Caminho | Conteudo |
 |---|---|
-| `src/main.cpp` | Rede Wi-Fi (AP), leitura (simulada) e publicador DDS |
+| `src/main.cpp` | Rede Wi-Fi (AP), leitura e publicador DDS |
+| `src/sensor_corrente.*` | Corrente RMS do TC ZMCT103C (ADC1) |
 | `src/credenciais.h.example` | Modelo do nome/senha da rede criada |
 | `lib/StreetLightDDS` | Topico DDS (igual na branch da CYD) |
 | `lib/embeddedRTPS`, `lib/MicroCDR` | Copias das bibliotecas (ver "embeddedRTPS na ESP32") |

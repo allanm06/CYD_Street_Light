@@ -18,6 +18,7 @@
 #include <math.h>
 
 #include "sl_dds.h"
+#include "sensor_corrente.h"
 
 #if __has_include("credenciais.h")
 #include "credenciais.h"
@@ -36,22 +37,24 @@ static_assert(sizeof(WIFI_PASS) - 1 >= 8 || sizeof(WIFI_PASS) == 1,
 static const IPAddress AP_IP(192, 168, 4, 1);
 static const IPAddress AP_MASK(255, 255, 255, 0);
 
-/* 1 = gera valores falsos (sem sensor ligado). Troque por 0 ao implementar
- * ler_medicao() com o sensor real (ex.: PZEM-004T, ZMPT101B + SCT-013). */
-#define MEDICAO_SIMULADA 1
+/* Corrente: ZMCT103C (src/sensor_corrente.*). Tensao: ainda sem sensor,
+ * 1 = valor simulado (ex.: ZMPT101B no futuro). */
+#define TENSAO_SIMULADA 1
 
 static bool ler_medicao(float *tensao_v, float *corrente_a)
 {
-#if MEDICAO_SIMULADA
+#if TENSAO_SIMULADA
     static uint32_t n;
-    float k = sinf(n++ * 0.3f);
-    *tensao_v   = 221.0f + 4.0f * k;
-    *corrente_a = 0.45f + 0.03f * k;
-    return true;
+    *tensao_v = 221.0f + 4.0f * sinf(n++ * 0.3f);
 #else
-    /* TODO: leitura do sensor real */
+    /* TODO: leitura do sensor de tensao */
     return false;
 #endif
+    if (!sensor_corrente_ler(corrente_a)) {
+        Serial.println("Corrente: leitura fora da faixa (verifique o TC / bias)");
+        return false;
+    }
+    return true;
 }
 
 static void wifi_eventos(WiFiEvent_t ev, WiFiEventInfo_t info)
@@ -99,6 +102,8 @@ void setup()
 {
     Serial.begin(115200);
     delay(200);
+
+    sensor_corrente_iniciar();
 
     if (!wifi_criar_rede()) {
         delay(3000);
