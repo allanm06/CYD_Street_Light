@@ -1,19 +1,13 @@
 /*
- * Sensor de corrente AC com o transformador de corrente ZMCT103C (1000:1, 0-10 A).
+ * Sensor de corrente AC: modulo ZMCT103C de 3 pinos (HW-670: VCC, GND, OUT).
  *
- * Ligacao (TC "puro", figura II do datasheet, com bias para o ADC da ESP32):
+ * Ligacao:  VCC -> alimentacao do modulo, GND -> GND, OUT -> CORRENTE_PINO.
+ * A fase (ou o neutro) da carga passa por dentro do furo do TC.
  *
- *   3V3 --[10k]--+--[10k]-- GND        divisor = meio da escala (~1,65 V)
- *                |  (+ 10uF ao GND)
- *                +---- TC pino 2
- *   TC pino 1 ---+---- CORRENTE_PINO (ADC1)
- *                |
- *   TC pino 2 --[R carga = CORRENTE_R_CARGA]-- TC pino 1   (resistor em paralelo com o TC)
- *
- * A fase (ou o neutro) da lampada passa por dentro do furo do TC.
- *
- * Se for o modulo pronto "ZMCT103C" (com LM358 e trimpot), ligue OUT no
- * CORRENTE_PINO e acerte CORRENTE_FATOR_A_POR_V pela calibracao (ver .cpp).
+ * O OUT desse modulo oscila em volta de 0 V (sem bias no meio da faixa), entao
+ * a ESP32 so enxerga o semiciclo positivo; a leitura usa isso (ver o .cpp).
+ * Com o ganho atual do trimpot: ~3,3 V de pico por ampere, ou seja, cabe ate
+ * ~0,9 A. Para mais corrente, baixe o ganho no trimpot e recalibre.
  */
 #pragma once
 
@@ -27,5 +21,5 @@
 void  sensor_corrente_iniciar(void);
 
 /* Mede ~10 ciclos da rede (~167 ms, bloqueante) e devolve a corrente RMS em A.
- * Retorna false se o sinal estiver fora da faixa do ADC (fio solto / saturado). */
+ * Retorna false se o sinal saturar o ADC (corrente alta demais para o ganho). */
 bool  sensor_corrente_ler(float *corrente_a);

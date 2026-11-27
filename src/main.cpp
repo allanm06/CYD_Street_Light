@@ -15,7 +15,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include <math.h>
 
 #include "sl_dds.h"
 #include "sensor_corrente.h"
@@ -37,23 +36,19 @@ static_assert(sizeof(WIFI_PASS) - 1 >= 8 || sizeof(WIFI_PASS) == 1,
 static const IPAddress AP_IP(192, 168, 4, 1);
 static const IPAddress AP_MASK(255, 255, 255, 0);
 
-/* Corrente: ZMCT103C (src/sensor_corrente.*). Tensao: ainda sem sensor,
- * 1 = valor simulado (ex.: ZMPT101B no futuro). */
-#define TENSAO_SIMULADA 1
+/* Corrente: ZMCT103C (src/sensor_corrente.*).
+ * Tensao: ainda sem sensor (sera feito depois). Por enquanto e CALCULADA a
+ * partir da potencia nominal da carga: V = P / I. Nao e uma medicao; sem
+ * corrente (carga desligada) publica 0 V. */
+#define CARGA_POTENCIA_W  25.0f   /* ferro de solda 25 W usado nos testes */
 
 static bool ler_medicao(float *tensao_v, float *corrente_a)
 {
-#if TENSAO_SIMULADA
-    static uint32_t n;
-    *tensao_v = 221.0f + 4.0f * sinf(n++ * 0.3f);
-#else
-    /* TODO: leitura do sensor de tensao */
-    return false;
-#endif
     if (!sensor_corrente_ler(corrente_a)) {
-        Serial.println("Corrente: leitura fora da faixa (verifique o TC / bias)");
+        Serial.println("Corrente: sinal saturou o ADC (corrente acima do limite)");
         return false;
     }
+    *tensao_v = *corrente_a > 0.0f ? CARGA_POTENCIA_W / *corrente_a : 0.0f;
     return true;
 }
 
